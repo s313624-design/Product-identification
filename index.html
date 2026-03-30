@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>商品辨識</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    body {
+      font-family: "Microsoft JhengHei", sans-serif;
+      text-align: center;
+      padding: 20px;
+      background: #f7f7f7;
+    }
+    .box {
+      background: white;
+      max-width: 700px;
+      margin: auto;
+      padding: 24px;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    }
+    img {
+      max-width: 280px;
+      margin-top: 15px;
+      border-radius: 12px;
+      border: 1px solid #ddd;
+    }
+    .result {
+      margin-top: 20px;
+      font-size: 18px;
+      line-height: 1.8;
+      text-align: left;
+      display: inline-block;
+    }
+    .final {
+      margin-top: 16px;
+      font-size: 22px;
+      font-weight: bold;
+      color: #1565c0;
+    }
+    .loading {
+      color: #888;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>商品圖片辨識</h2>
+    <p>請上傳一張圖片，系統將自動判斷類別。</p>
+
+    <input type="file" id="imageUpload" accept="image/*">
+    <br>
+    <img id="preview" style="display:none;">
+    <div id="loading" class="loading">模型載入中...</div>
+    <div id="result" class="result"></div>
+    <div id="final" class="final"></div>
+  </div>
+
+  <script>
+    const MODEL_BASE = "https://teachablemachine.withgoogle.com/models/7VIVrDbmO/";
+    const modelURL = MODEL_BASE + "model.json";
+    const metadataURL = MODEL_BASE + "metadata.json";
+
+    let model;
+
+    async function init() {
+      try {
+        model = await tmImage.load(modelURL, metadataURL);
+        document.getElementById("loading").innerText = "模型載入完成，請上傳圖片。";
+        console.log("模型載入成功");
+      } catch (error) {
+        document.getElementById("loading").innerText = "模型載入失敗";
+        console.error("模型載入錯誤：", error);
+      }
+    }
+
+    async function predictImage(image) {
+      try {
+        const prediction = await model.predict(image);
+        prediction.sort((a, b) => b.probability - a.probability);
+
+        let html = "";
+        prediction.forEach(item => {
+          html += `${item.className}：${(item.probability * 100).toFixed(2)}%<br>`;
+        });
+
+        document.getElementById("result").innerHTML = html;
+        document.getElementById("final").innerHTML =
+          `最終預測：${prediction[0].className}`;
+      } catch (error) {
+        console.error("預測失敗：", error);
+        document.getElementById("final").innerHTML = "預測失敗，請重新選擇圖片";
+      }
+    }
+
+    document.getElementById("imageUpload").addEventListener("change", function(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const preview = document.getElementById("preview");
+      preview.src = window.URL.createObjectURL(file);
+      preview.style.display = "block";
+
+      preview.onload = async () => {
+        await predictImage(preview);
+      };
+    });
+
+    init();
+  </script>
+</body>
+</html>
