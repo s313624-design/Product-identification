@@ -1,167 +1,92 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>商品即時辨識</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <title>自動物件偵測與計數</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
   <style>
-    body {
-      font-family: "Microsoft JhengHei", sans-serif;
-      text-align: center;
-      background: #f5f5f5;
-      margin: 0;
-      padding: 20px;
-    }
-
-    .container {
-      max-width: 900px;
-      margin: auto;
-      background: white;
-      border-radius: 20px;
-      padding: 24px;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.12);
-    }
-
-    h1 {
-      margin-bottom: 8px;
-    }
-
-    .status {
-      margin: 10px 0 20px;
-      color: #666;
-      font-size: 16px;
-    }
-
-    #webcam-container canvas {
-      border-radius: 16px;
-      border: 1px solid #ddd;
-      max-width: 100%;
-    }
-
-    .result-box {
-      margin-top: 24px;
-      padding: 16px;
-      background: #f9fbff;
-      border-radius: 16px;
-    }
-
-    .final-result {
-      font-size: 28px;
-      font-weight: bold;
-      color: #1565c0;
-      margin-bottom: 12px;
-    }
-
-    .probability {
-      font-size: 18px;
-      line-height: 1.9;
-      text-align: left;
-      display: inline-block;
-    }
-
-    .tip {
-      margin-top: 18px;
-      color: #777;
-      font-size: 15px;
-    }
-
-    button {
-      font-size: 16px;
-      padding: 10px 18px;
-      border: none;
-      border-radius: 10px;
-      background: #1565c0;
-      color: white;
-      cursor: pointer;
-      margin-top: 12px;
-    }
-
-    button:hover {
-      background: #0d47a1;
-    }
+    body { font-family: sans-serif; text-align: center; }
+    .container { position: relative; display: inline-block; }
+    canvas { position: absolute; left: 0; top: 0; }
+    video { border: 1px solid #ccc; border-radius: 10px; }
+    #result { font-size: 24px; font-weight: bold; color: #1565c0; margin-top: 20px; }
   </style>
 </head>
 <body>
+  <h1>即時物件計數系統 (預訓練模型)</h1>
   <div class="container">
-    <h1>即時辨識系統</h1>
-    <div class="status" id="status">模型與鏡頭初始化中...</div>
-
-    <div id="webcam-container"></div>
-
-    <div class="result-box">
-      <div class="final-result" id="final-result">等待辨識中...</div>
-      <div class="probability" id="label-container"></div>
-    </div>
-
-    <button onclick="init()">重新啟動鏡頭</button>
-
-    <div class="tip">
-      將物品放到鏡頭前，系統會自動即時辨識。
-    </div>
+    <video id="video" width="640" height="480" autoplay muted></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
   </div>
+  <div id="result">正在啟動鏡頭...</div>
 
   <script>
-    const MODEL_BASE = "https://teachablemachine.withgoogle.com/models/7VIVrDbmO/";
-    const modelURL = MODEL_BASE + "model.json";
-    const metadataURL = MODEL_BASE + "metadata.json";
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const resultDiv = document.getElementById('result');
 
-    let model, webcam, maxPredictions;
-    let isRunning = false;
-
-    async function init() {
-      try {
-        document.getElementById("status").innerText = "正在載入模型...";
-        document.getElementById("webcam-container").innerHTML = "";
-        document.getElementById("label-container").innerHTML = "";
-        document.getElementById("final-result").innerText = "等待辨識中...";
-
-        model = await tmImage.load(modelURL, metadataURL);
-        maxPredictions = model.getTotalClasses();
-
-        // 建議使用接近正方形，符合 Teachable Machine 影像訓練習慣
-        const flip = true;
-        webcam = new tmImage.Webcam(300, 300, flip);
-
-        document.getElementById("status").innerText = "請允許使用鏡頭...";
-        await webcam.setup();   // 會跳出鏡頭權限要求
-        await webcam.play();
-
-        document.getElementById("webcam-container").appendChild(webcam.canvas);
-        document.getElementById("status").innerText = "鏡頭已啟動，正在即時辨識。";
-
-        isRunning = true;
-        window.requestAnimationFrame(loop);
-      } catch (error) {
-        console.error(error);
-        document.getElementById("status").innerText =
-          "無法啟動鏡頭或載入模型，請確認已允許相機權限，且頁面在 HTTPS 環境下開啟。";
-      }
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      return new Promise(resolve => video.onloadedmetadata = () => resolve());
     }
 
-    async function loop() {
-      if (!isRunning) return;
-      webcam.update();
-      await predict();
-      window.requestAnimationFrame(loop);
+    async function detect() {
+      const model = await cocoSsd.load();
+      resultDiv.innerText = "模型載入成功，開始辨識...";
+      
+      setInterval(async () => {
+        const predictions = await model.detect(video);
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const counts = {};
+
+        predictions.forEach(prediction => {
+          // 畫框
+          ctx.strokeStyle = "#00FF00";
+          ctx.lineWidth = 4;
+          ctx.strokeRect(...prediction.bbox);
+
+          // 畫文字
+          ctx.fillStyle = "#00FF00";
+          ctx.font = "18px Arial";
+          ctx.fillText(prediction.class, prediction.bbox[0], prediction.bbox[1] > 20 ? prediction.bbox[1] - 5 : 20);
+
+          // 計數
+          counts[prediction.class] = (counts[prediction.class] || 0) + 1;
+        });
+
+        // 顯示結果 (例如: bottle-2)
+        const summary = Object.keys(counts).map(key => `${key}-${counts[key]}`).join(' 、 ');
+        resultDiv.innerText = summary || "未偵測到物品";
+      }, 200);
     }
 
-    async function predict() {
-      const prediction = await model.predict(webcam.canvas);
-
-      prediction.sort((a, b) => b.probability - a.probability);
-
-      let html = "";
-      prediction.forEach(item => {
-        html += `${item.className}：${(item.probability * 100).toFixed(2)}%<br>`;
-      });
-
-      document.getElementById("label-container").innerHTML = html;
-      document.getElementById("final-result").innerText =
-        `目前物品：${prediction[0].className}`;
-    }
-
-    window.addEventListener("load", init);
+    setupCamera().then(detect);
   </script>
 </body>
 </html>
+coco.txt
+目前顯示的是「coco.txt」。首頁 - Classroom
+114-2 英文聽講
+電機二甲
+1110701唐若妤
+
+114_1_電機二甲_電子學實習
+1090817蔡政銓
+
+114基礎電子實習&專題製作
+電機二甲
+楊鎮澤
+
+113-2電機一甲 -音樂
+1070815林筠婷
+
+113-2 資訊科技-電機一甲
+1130810呂俊緯
+
+113-1電機一甲
+歷史
+中山工商黃千芳940911
+
